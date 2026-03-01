@@ -1,0 +1,137 @@
+openapi: 3.0.3
+info:
+  title: Personal Ops Backend API
+  version: 1.0.0
+servers:
+  - url: https://api.yourdomain.com
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200': { description: OK }
+  /auth/signup:
+    post:
+      summary: Signup (optional)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '201': { description: Created }
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Tokens issued }
+  /auth/refresh:
+    post:
+      summary: Refresh tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200': { description: Tokens rotated }
+  /auth/logout:
+    post:
+      summary: Revoke refresh token
+      responses:
+        '200': { description: Logged out }
+  /devices/register:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Register iOS FCM token
+      responses:
+        '200': { description: Registered }
+  /devices/unregister:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Unregister device token
+      responses:
+        '200': { description: Unregistered }
+  /tasks:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List tasks
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string, format: date-time }
+      responses:
+        '200': { description: OK }
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Create manual task
+      responses:
+        '201': { description: Created }
+  /tasks/{id}:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Get task by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+  /tasks/{id}/events:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List task events
+      responses:
+        '200': { description: OK }
+  /tasks/{id}/action:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Perform task action (idempotent with Idempotency-Key)
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string }
+      responses:
+        '200': { description: Action accepted }
+  /webhooks/grafana:
+    post:
+      summary: Grafana alert ingestion
+      responses:
+        '202': { description: Accepted }
+  /webhooks/n8n-callback:
+    post:
+      summary: n8n callback (HMAC validated)
+      responses:
+        '202': { description: Accepted }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
