@@ -65,6 +65,7 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
+		r.Post("/auth/change-password", s.handleChangePassword)
 		r.Post("/devices/register", s.handleDeviceRegister)
 		r.Post("/devices/unregister", s.handleDeviceUnregister)
 
@@ -171,11 +172,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.db.TouchLogin(r.Context(), u.ID)
-	util.WriteJSON(w, http.StatusOK, map[string]any{"accessToken": access, "refreshToken": refresh, "user": map[string]any{"id": u.ID, "email": u.Email}})
+	util.WriteJSON(w, http.StatusOK, map[string]any{
+		"accessToken":        access,
+		"refreshToken":       refresh,
+		"mustChangePassword": u.MustChangePassword,
+		"user": map[string]any{
+			"id":                 u.ID,
+			"email":              u.Email,
+			"isAdmin":            u.IsAdmin,
+			"mustChangePassword": u.MustChangePassword,
+		},
+	})
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	var in struct{ RefreshToken string `json:"refreshToken"` }
+	var in struct {
+		RefreshToken string `json:"refreshToken"`
+	}
 	if err := util.ReadJSON(r, &in, 1<<20); err != nil || in.RefreshToken == "" {
 		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid input"})
 		return
@@ -198,11 +211,58 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	var in struct{ RefreshToken string `json:"refreshToken"` }
+	var in struct {
+		RefreshToken string `json:"refreshToken"`
+	}
 	_ = util.ReadJSON(r, &in, 1<<20)
 	if in.RefreshToken != "" {
 		_ = s.db.RevokeRefreshToken(r.Context(), auth.HashOpaque(in.RefreshToken))
 	}
+	util.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID := userIDFromCtx(r.Context())
+	var in struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := util.ReadJSON(r, &in, 1<<20); err != nil {
+		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	if len(in.NewPassword) < 8 {
+		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "new password must be at least 8 chars"})
+		return
+	}
+	u, err := s.db.GetUserByID(r.Context(), userID)
+	if err == db.ErrNotFound {
+		util.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
+		return
+	}
+	if err != nil || !auth.VerifyPassword(u.PasswordHash, in.CurrentPassword) {
+		util.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid credentials"})
+		return
+	}
+	if auth.VerifyPassword(u.PasswordHash, in.NewPassword) {
+		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "new password must be different"})
+		return
+	}
+	newHash, err := auth.HashPassword(in.NewPassword, auth.ArgonParams{
+		MemoryKB: s.cfg.PasswordHashMemoryKB,
+		Iter:     s.cfg.PasswordHashIter,
+		Parallel: s.cfg.PasswordHashParallel,
+		KeyLen:   32,
+	})
+	if err != nil {
+		util.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "hash failed"})
+		return
+	}
+	if err := s.db.ChangeUserPassword(r.Context(), userID, newHash); err != nil {
+		util.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "password update failed"})
+		return
+	}
+	_ = s.db.RevokeAllRefreshTokensForUser(r.Context(), userID)
 	util.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -230,7 +290,9 @@ func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeviceUnregister(w http.ResponseWriter, r *http.Request) {
 	userID := userIDFromCtx(r.Context())
-	var in struct{ FCMToken string `json:"fcmToken"` }
+	var in struct {
+		FCMToken string `json:"fcmToken"`
+	}
 	if err := util.ReadJSON(r, &in, 1<<20); err != nil || in.FCMToken == "" {
 		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid input"})
 		return
@@ -449,9 +511,9 @@ func (s *Server) handleN8NCallback(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		TaskID string `json:"taskId"`
 		Patch  struct {
-			Title        *string         `json:"title"`
-			Severity     *string         `json:"severity"`
-			PayloadMerge map[string]any  `json:"payloadMerge"`
+			Title        *string        `json:"title"`
+			Severity     *string        `json:"severity"`
+			PayloadMerge map[string]any `json:"payloadMerge"`
 		} `json:"patch"`
 		Event map[string]any `json:"event"`
 	}
@@ -510,9 +572,12 @@ func grafanaDedupe(ruleUID string, labels map[string]string) string {
 }
 
 func (s *Server) pickSingleUser(ctx context.Context) (db.User, error) {
-	row := s.db.Pool.QueryRow(ctx, `select id,email,password_hash,created_at,last_login_at from users order by created_at asc limit 1`)
+	row := s.db.Pool.QueryRow(ctx, `
+select id,email,password_hash,is_admin,must_change_password,created_at,last_login_at,password_changed_at
+from users order by created_at asc limit 1
+`)
 	var u db.User
-	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.LastLoginAt)
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.MustChangePassword, &u.CreatedAt, &u.LastLoginAt, &u.PasswordChangedAt)
 	return u, err
 }
 
@@ -537,7 +602,9 @@ type ctxKey string
 
 const userIDKey ctxKey = "uid"
 
-func withUserID(ctx context.Context, uid string) context.Context { return context.WithValue(ctx, userIDKey, uid) }
+func withUserID(ctx context.Context, uid string) context.Context {
+	return context.WithValue(ctx, userIDKey, uid)
+}
 
 func userIDFromCtx(ctx context.Context) string {
 	v, _ := ctx.Value(userIDKey).(string)

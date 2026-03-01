@@ -40,6 +40,22 @@ paths:
                 password: { type: string }
       responses:
         '200': { description: Tokens issued }
+  /auth/change-password:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Change current user password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '200': { description: Password changed }
   /auth/refresh:
     post:
       summary: Refresh tokens

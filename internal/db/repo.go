@@ -14,15 +14,35 @@ import (
 var ErrNotFound = errors.New("not found")
 
 func (d *DB) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
-	u := User{ID: uuid.NewString(), Email: email, PasswordHash: passwordHash}
-	err := d.Pool.QueryRow(ctx, `insert into users(id,email,password_hash) values($1,$2,$3) returning created_at`, u.ID, u.Email, u.PasswordHash).Scan(&u.CreatedAt)
+	u := User{ID: uuid.NewString(), Email: email, PasswordHash: passwordHash, IsAdmin: false, MustChangePassword: false}
+	err := d.Pool.QueryRow(ctx, `
+insert into users(id,email,password_hash,is_admin,must_change_password,password_changed_at)
+values($1,$2,$3,$4,$5,now())
+returning created_at
+`, u.ID, u.Email, u.PasswordHash, u.IsAdmin, u.MustChangePassword).Scan(&u.CreatedAt)
 	return u, err
 }
 
 func (d *DB) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var u User
-	err := d.Pool.QueryRow(ctx, `select id,email,password_hash,created_at,last_login_at from users where email=$1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.LastLoginAt)
+	err := d.Pool.QueryRow(ctx, `
+select id,email,password_hash,is_admin,must_change_password,created_at,last_login_at,password_changed_at
+from users where email=$1
+`, email).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.MustChangePassword, &u.CreatedAt, &u.LastLoginAt, &u.PasswordChangedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return u, ErrNotFound
+	}
+	return u, err
+}
+
+func (d *DB) GetUserByID(ctx context.Context, userID string) (User, error) {
+	var u User
+	err := d.Pool.QueryRow(ctx, `
+select id,email,password_hash,is_admin,must_change_password,created_at,last_login_at,password_changed_at
+from users where id=$1
+`, userID).
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.IsAdmin, &u.MustChangePassword, &u.CreatedAt, &u.LastLoginAt, &u.PasswordChangedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, ErrNotFound
 	}
@@ -31,6 +51,29 @@ func (d *DB) GetUserByEmail(ctx context.Context, email string) (User, error) {
 
 func (d *DB) TouchLogin(ctx context.Context, userID string) error {
 	_, err := d.Pool.Exec(ctx, `update users set last_login_at=now() where id=$1`, userID)
+	return err
+}
+
+func (d *DB) EnsureDefaultAdmin(ctx context.Context, email, passwordHash string) error {
+	_, err := d.Pool.Exec(ctx, `
+insert into users(id,email,password_hash,is_admin,must_change_password)
+values($1,$2,$3,true,true)
+on conflict (email) do nothing
+`, uuid.NewString(), email, passwordHash)
+	return err
+}
+
+func (d *DB) ChangeUserPassword(ctx context.Context, userID, newPasswordHash string) error {
+	_, err := d.Pool.Exec(ctx, `
+update users
+set password_hash=$2, must_change_password=false, password_changed_at=now()
+where id=$1
+`, userID, newPasswordHash)
+	return err
+}
+
+func (d *DB) RevokeAllRefreshTokensForUser(ctx context.Context, userID string) error {
+	_, err := d.Pool.Exec(ctx, `update refresh_tokens set revoked_at=now() where user_id=$1 and revoked_at is null`, userID)
 	return err
 }
 

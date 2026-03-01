@@ -28,6 +28,8 @@ type Config struct {
 	FCMEnabled           bool
 	BaseURL              string
 	AllowSignup          bool
+	DefaultAdminEmail    string
+	DefaultAdminPassword string
 }
 
 func Load() (Config, error) {
@@ -58,6 +60,8 @@ func Load() (Config, error) {
 	cfg.FCMEnabled = strings.EqualFold(getDefault("FCM_ENABLED", "false"), "true")
 	cfg.BaseURL = getDefault("BASE_URL", "http://localhost:8080")
 	cfg.AllowSignup = strings.EqualFold(getDefault("ALLOW_SIGNUP", "true"), "true")
+	cfg.DefaultAdminEmail = strings.ToLower(strings.TrimSpace(getDefault("DEFAULT_ADMIN_EMAIL", "admin@local.dev")))
+	cfg.DefaultAdminPassword = getDefault("DEFAULT_ADMIN_PASSWORD", "ChangeMe123!")
 
 	if cfg.DatabaseURL == "" || cfg.JWTAccessSecret == "" || cfg.JWTRefreshSecret == "" {
 		return cfg, fmt.Errorf("missing required env vars: DATABASE_URL/JWT_ACCESS_SECRET/JWT_REFRESH_SECRET")

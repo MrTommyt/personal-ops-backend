@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"personal-ops-backend/internal/auth"
 	"personal-ops-backend/internal/config"
 	"personal-ops-backend/internal/db"
 	"personal-ops-backend/internal/httpapi"
@@ -30,6 +32,9 @@ func main() {
 	defer store.Close()
 
 	if err := store.Migrate(ctx, "migrations"); err != nil {
+		log.Fatal(err)
+	}
+	if err := ensureDefaultAdmin(ctx, store, cfg); err != nil {
 		log.Fatal(err)
 	}
 
@@ -63,4 +68,21 @@ func getBuild() string {
 		return v
 	}
 	return "dev"
+}
+
+func ensureDefaultAdmin(ctx context.Context, store *db.DB, cfg config.Config) error {
+	email := strings.ToLower(strings.TrimSpace(cfg.DefaultAdminEmail))
+	if email == "" || cfg.DefaultAdminPassword == "" {
+		return nil
+	}
+	hash, err := auth.HashPassword(cfg.DefaultAdminPassword, auth.ArgonParams{
+		MemoryKB: cfg.PasswordHashMemoryKB,
+		Iter:     cfg.PasswordHashIter,
+		Parallel: cfg.PasswordHashParallel,
+		KeyLen:   32,
+	})
+	if err != nil {
+		return err
+	}
+	return store.EnsureDefaultAdmin(ctx, email, hash)
 }

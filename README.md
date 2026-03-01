@@ -4,6 +4,8 @@ Go implementation of the API described in `Plan.md`, optimized for low resource 
 
 ## Features
 - Email/password auth with JWT access + refresh rotation
+- Default admin account auto-created on boot (password rotation required)
+- Authenticated password change endpoint for first-login credential rotation
 - Device registration for iOS FCM tokens
 - Task inbox API + task events audit log
 - Idempotent task actions via `Idempotency-Key`
@@ -23,6 +25,13 @@ go run ./cmd/api
 ## Railway deploy
 - Use included `Dockerfile`.
 - Provide required env vars listed in `.env.example` and `Plan.md`.
+
+## Default Admin
+- On startup, the API seeds an admin account from:
+  - `DEFAULT_ADMIN_EMAIL`
+  - `DEFAULT_ADMIN_PASSWORD`
+- First login response includes `mustChangePassword=true` for the seeded admin.
+- Change it via `POST /auth/change-password` with bearer token.
 
 ## API docs
 - OpenAPI: `docs/openapi.yaml`
