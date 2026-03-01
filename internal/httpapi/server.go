@@ -142,7 +142,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
-		DeviceID string `json:"deviceId"`
 	}
 	if err := util.ReadJSON(r, &in, 1<<20); err != nil {
 		util.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
@@ -163,11 +162,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		util.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "token issue"})
 		return
 	}
-	var deviceID *string
-	if id := strings.TrimSpace(in.DeviceID); id != "" {
-		deviceID = &id
-	}
-	if err := s.db.SaveRefreshToken(r.Context(), u.ID, auth.HashOpaque(refresh), time.Now().Add(s.cfg.JWTRefreshTTL), deviceID); err != nil {
+	if err := s.db.SaveRefreshToken(r.Context(), u.ID, auth.HashOpaque(refresh), time.Now().Add(s.cfg.JWTRefreshTTL)); err != nil {
 		util.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "session save failed"})
 		return
 	}
@@ -206,7 +201,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.RevokeRefreshToken(r.Context(), auth.HashOpaque(in.RefreshToken))
 	access, _ := s.tm.NewAccessToken(claims.UserID)
 	refresh, _ := s.tm.NewRefreshToken(claims.UserID)
-	_ = s.db.SaveRefreshToken(r.Context(), claims.UserID, auth.HashOpaque(refresh), time.Now().Add(s.cfg.JWTRefreshTTL), nil)
+	_ = s.db.SaveRefreshToken(r.Context(), claims.UserID, auth.HashOpaque(refresh), time.Now().Add(s.cfg.JWTRefreshTTL))
 	util.WriteJSON(w, http.StatusOK, map[string]any{"accessToken": access, "refreshToken": refresh})
 }
 

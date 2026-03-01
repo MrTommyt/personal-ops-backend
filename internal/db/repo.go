@@ -77,8 +77,8 @@ func (d *DB) RevokeAllRefreshTokensForUser(ctx context.Context, userID string) e
 	return err
 }
 
-func (d *DB) SaveRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, deviceID *string) error {
-	_, err := d.Pool.Exec(ctx, `insert into refresh_tokens(id,user_id,token_hash,expires_at,device_id) values($1,$2,$3,$4,$5)`, uuid.NewString(), userID, tokenHash, expiresAt, deviceID)
+func (d *DB) SaveRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	_, err := d.Pool.Exec(ctx, `insert into refresh_tokens(id,user_id,token_hash,expires_at) values($1,$2,$3,$4)`, uuid.NewString(), userID, tokenHash, expiresAt)
 	return err
 }
 
